@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Quiz Host</title>
+<link rel="stylesheet" href="/host.css">
+</head>
+<body>
+  <div class="topbar">
+    <div class="tabs" id="tabs">
+      <button class="tab active" data-view="lobby">Lobby</button>
+      <button class="tab" data-view="creator">Quiz Creator</button>
+    </div>
+    <label for="joinUrl">Join URL</label>
+    <input id="joinUrl" type="url" placeholder="http://192.168.1.10:3000/" autocomplete="off">
+    <button class="btn" id="updateQr">Update QR</button>
+    <span class="msg" id="urlMsg"></span>
+  </div>
+
+  <main>
+    <!-- Lobby -->
+    <section id="lobby" class="lobby">
+      <div class="card">
+        <div class="pin-label">Game PIN</div>
+        <div class="pin" id="pin">······</div>
+        <img class="qr" id="qr" alt="Scan to join">
+        <div class="join-url" id="joinUrlShown"></div>
+      </div>
+      <div class="card">
+        <div class="quiz-pick">
+          <label for="quizSelect" class="muted">Quiz</label>
+          <select id="quizSelect"></select>
+          <button class="btn btn-sm" id="editSelected">Edit</button>
+        </div>
+        <div class="players-head">
+          <h2>Players <span class="count" id="count">0</span></h2>
+          <div class="form-row">
+            <span class="msg err" id="startMsg"></span>
+            <button class="btn btn-primary" id="startBtn" disabled>Start Game</button>
+          </div>
+        </div>
+        <div class="players" id="players"><span class="empty">Waiting for players to join…</span></div>
+      </div>
+    </section>
+
+    <!-- Quiz Creator -->
+    <section id="creator" class="creator hidden">
+      <div class="card">
+        <h2>Quizzes</h2>
+        <div class="quiz-list" id="quizList"></div>
+        <form class="new-quiz" id="newQuizForm">
+          <input id="newQuizTitle" placeholder="New quiz title" maxlength="80" required>
+          <button class="btn btn-primary" type="submit">Create</button>
+        </form>
+      </div>
+
+      <div class="editor" id="editor">
+        <div class="card">
+          <div class="title-row">
+            <input id="quizTitle" maxlength="80" aria-label="Quiz title">
+            <button class="btn" id="useQuiz">Use in Lobby</button>
+            <button class="btn btn-danger" id="deleteQuiz">Delete</button>
+          </div>
+          <h3 style="margin-top:20px">Questions <span class="muted" id="qCount"></span></h3>
+          <div class="q-list" id="qList"></div>
+        </div>
+
+        <div class="card">
+          <h3 id="formTitle">Add a question</h3>
+          <form class="form-grid" id="qForm">
+            <textarea id="qPrompt" rows="2" maxlength="300" placeholder="Question prompt" required></textarea>
+            <div class="opt-inputs" id="optInputs"></div>
+            <div class="form-row">
+              <label for="qDuration" class="muted">Timer</label>
+              <select id="qDuration">
+                <option value="5">5 seconds</option>
+                <option value="10">10 seconds</option>
+                <option value="15">15 seconds</option>
+                <option value="20" selected>20 seconds</option>
+                <option value="30">30 seconds</option>
+                <option value="45">45 seconds</option>
+                <option value="60">60 seconds</option>
+                <option value="90">90 seconds</option>
+                <option value="120">120 seconds</option>
+              </select>
+              <span class="grow"></span>
+              <span class="msg" id="qMsg"></span>
+              <button class="btn hidden" type="button" id="cancelEdit">Cancel</button>
+              <button class="btn btn-primary" type="submit" id="saveQ">Add question</button>
+            </div>
+          </form>
+        </div>
+
+        <div class="card">
+          <h3>Bulk import</h3>
+          <p class="hint">
+            Paste JSON or structured text, or upload a PDF, Excel (.xlsx), CSV, JSON or TXT file. Structured text looks like
+            <code>Q: What is 2+2? A) 3 B) 4 C) 5 D) 6 Answer: B, Time: 20</code>, one question per <code>Q:</code>.
+            Spreadsheets use the columns <code>Question, A, B, C, D, Answer, Time</code>.
+          </p>
+          <textarea id="importText" rows="7" placeholder='Q: Capital of France?
+A) Berlin
+B) Madrid
+C) Paris
+D) Rome
+Answer: C, Time: 20'></textarea>
+          <div class="import-actions">
+            <button class="btn" id="previewImport">Preview</button>
+            <span class="btn file-btn">Upload file<input type="file" id="importFile" accept=".pdf,.xlsx,.csv,.json,.txt"></span>
+            <span class="msg" id="importMsg"></span>
+          </div>
+          <div class="preview hidden" id="preview">
+            <ul class="errors" id="previewErrors"></ul>
+            <div class="q-list" id="previewList"></div>
+            <div class="import-actions">
+              <button class="btn btn-primary" id="confirmImport">Add questions</button>
+              <button class="btn" id="cancelImport">Discard</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Question + results -->
+    <section id="game" class="hidden">
+      <div class="q-head">
+        <div class="q-meta"><span id="qMeta"></span><button class="btn btn-sm" id="skipBtn">End question now</button></div>
+        <div class="timer">
+          <svg width="110" height="110" viewBox="0 0 110 110">
+            <circle cx="55" cy="55" r="48" fill="none" stroke="#2c3140" stroke-width="8"/>
+            <circle id="ring" cx="55" cy="55" r="48" fill="none" stroke="#7c5cff" stroke-width="8" stroke-linecap="round" stroke-dasharray="301.6" stroke-dashoffset="0"/>
+          </svg>
+          <div class="num" id="timerNum">20</div>
+        </div>
+      </div>
+      <h1 class="q-text" id="qText"></h1>
+      <div class="options" id="options"></div>
+      <div class="progress" id="progress"></div>
+
+      <div class="board hidden" id="board">
+        <div class="reveal-grid">
+          <div class="card">
+            <h2>Answers</h2>
+            <div class="breakdown" id="breakdown"></div>
+            <div class="fastest" id="fastest"></div>
+          </div>
+          <div class="card">
+            <h2>Leaderboard</h2>
+            <div class="row head"><span>#</span><span>Name</span><span></span><span>Fastest</span><span>Score</span></div>
+            <div id="boardRows"></div>
+          </div>
+        </div>
+        <div class="actions">
+          <button class="btn" id="lobbyBtn">End game</button>
+          <button class="btn btn-primary" id="nextBtn">Next question</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Final results -->
+    <section id="final" class="final hidden">
+      <h1>Final results</h1>
+      <div class="muted" id="finalTitle"></div>
+      <div class="podium" id="podium"></div>
+      <div class="board final-rest"><div id="finalRows"></div></div>
+      <div class="confetti" id="confetti"></div>
+      <div class="actions final-actions"><button class="btn btn-primary" id="finalLobbyBtn">Play Again / Reset</button></div>
+    </section>
+  </main>
+
+  <div class="gate hidden" id="gate">
+    <form id="gateForm">
+      <h1>Host key needed</h1>
+      <p class="muted" style="margin:0">This page controls the quiz. Enter the host key printed in the server console when it started.</p>
+      <input id="gateKey" placeholder="Host key" autocomplete="off" required>
+      <button class="btn btn-primary" type="submit">Continue</button>
+      <span class="msg err" id="gateMsg"></span>
+    </form>
+  </div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script src="/host.js"></script>
+</body>
+</html>

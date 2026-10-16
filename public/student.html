@@ -1,0 +1,248 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="theme-color" content="#14161d">
+<title>Join Quiz</title>
+<style>
+  :root {
+    --bg: #14161d; --panel: #1d2029; --border: #2e3240; --text: #eef0f5; --muted: #8c92a4; --accent: #7c5cff;
+    --red: #e5484d; --blue: #3e7bfa; --yellow: #f5b82e; --green: #2fb36b;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { height: 100%; }
+  body { margin: 0; background: var(--bg); color: var(--text); font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif; overscroll-behavior: none; }
+  .hidden { display: none !important; }
+  .screen { min-height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 24px 16px; text-align: center; }
+
+  /* Join */
+  .join { width: 100%; max-width: 360px; }
+  .join h1 { font-size: 30px; margin: 0 0 24px; }
+  .join input { width: 100%; padding: 16px; margin-bottom: 12px; font: inherit; font-size: 20px; text-align: center; border-radius: 12px; border: 1px solid var(--border); background: var(--panel); color: var(--text); }
+  .join input:focus { outline: 2px solid var(--accent); border-color: transparent; }
+  .join button { width: 100%; padding: 16px; font: inherit; font-size: 20px; font-weight: 700; border: 0; border-radius: 12px; background: var(--accent); color: #fff; cursor: pointer; }
+  .join button:disabled { opacity: .5; }
+  .error { color: var(--red); min-height: 22px; margin-top: 12px; }
+
+  .big { font-size: 26px; font-weight: 700; margin: 0 0 8px; }
+  .sub { color: var(--muted); font-size: 17px; margin: 0; }
+  .spinner { width: 42px; height: 42px; border: 4px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 1s linear infinite; margin: 24px auto 0; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* Answer pad */
+  .pad-wrap { height: 100%; display: flex; flex-direction: column; padding: 12px; gap: 12px; }
+  .pad-top { display: flex; justify-content: space-between; align-items: center; padding: 4px 6px; color: var(--muted); font-weight: 600; }
+  .pad-top .time { color: var(--text); font-size: 22px; font-variant-numeric: tabular-nums; }
+  .pad { flex: 1; display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; gap: 12px; }
+  .ans { border: 0; border-radius: 18px; font: inherit; font-size: 64px; font-weight: 800; color: #fff; cursor: pointer; touch-action: manipulation; transition: transform .1s, opacity .2s, filter .2s; box-shadow: inset 0 -6px 0 rgba(0,0,0,.2); }
+  .ans:active { transform: scale(.97); }
+  .ans-0 { background: var(--red); } .ans-1 { background: var(--blue); }
+  .ans-2 { background: var(--yellow); color: #1a1a1a; } .ans-3 { background: var(--green); }
+  .pad.locked .ans { opacity: .2; filter: grayscale(.6); pointer-events: none; }
+  .pad.locked .ans.picked { opacity: 1; filter: none; box-shadow: 0 0 0 5px #fff; }
+  .lock-note { text-align: center; color: var(--muted); font-size: 17px; min-height: 24px; }
+
+  /* Result */
+  .badge { width: 96px; height: 96px; border-radius: 50%; display: grid; place-items: center; font-size: 52px; margin: 0 auto 18px; color: #fff; }
+  .ok { background: var(--green); } .bad { background: var(--red); } .none { background: var(--border); }
+  .score { margin-top: 22px; background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 16px 28px; font-size: 18px; }
+  .score b { font-size: 26px; }
+  .place { font-size: 72px; font-weight: 800; margin-bottom: 8px; color: var(--muted); }
+  .place.top1 { color: #f5c542; } .place.top2 { color: #c9d1dc; } .place.top3 { color: #d08a4e; }
+</style>
+</head>
+<body>
+  <!-- Join -->
+  <section class="screen" id="joinScreen">
+    <form class="join" id="joinForm">
+      <h1>Join the quiz</h1>
+      <input id="pinInput" inputmode="numeric" pattern="[0-9]*" maxlength="6" placeholder="Game PIN" autocomplete="off" required>
+      <input id="nameInput" maxlength="20" placeholder="Your name" autocomplete="off" required>
+      <button id="joinBtn" type="submit">Join</button>
+      <div class="error" id="joinError"></div>
+    </form>
+  </section>
+
+  <!-- Waiting -->
+  <section class="screen hidden" id="waitScreen">
+    <p class="big" id="waitTitle">You're in!</p>
+    <p class="sub" id="waitSub">Look at the screen. The game will start soon.</p>
+    <div class="spinner"></div>
+  </section>
+
+  <!-- Answer pad: buttons only, no question or answer text ever reaches this page -->
+  <section class="pad-wrap hidden" id="padScreen">
+    <div class="pad-top"><span id="who"></span><span id="qNum"></span><span class="time" id="time">20</span></div>
+    <div class="pad" id="pad">
+      <button class="ans ans-0" data-c="0" aria-label="Red A">A</button>
+      <button class="ans ans-1" data-c="1" aria-label="Blue B">B</button>
+      <button class="ans ans-2" data-c="2" aria-label="Yellow C">C</button>
+      <button class="ans ans-3" data-c="3" aria-label="Green D">D</button>
+    </div>
+    <div class="lock-note" id="lockNote"></div>
+  </section>
+
+  <!-- Result -->
+  <section class="screen hidden" id="resultScreen">
+    <div class="badge" id="badge"></div>
+    <p class="big" id="resultTitle"></p>
+    <p class="sub" id="resultSub"></p>
+    <div class="score">Score <b id="scoreVal">0</b> · Rank <b id="rankVal">-</b></div>
+    <p class="sub" id="nextNote" style="margin-top:18px"></p>
+  </section>
+
+  <!-- Final -->
+  <section class="screen hidden" id="finalScreen">
+    <div class="place" id="finalPlace"></div>
+    <p class="big" id="finalTitle"></p>
+    <div class="score">Final score <b id="finalScore">0</b></div>
+  </section>
+
+<script src="/socket.io/socket.io.js"></script>
+<script>
+  const socket = io();
+  const $ = (id) => document.getElementById(id);
+  const screens = ['joinScreen', 'waitScreen', 'padScreen', 'resultScreen', 'finalScreen'];
+  const show = (id) => screens.forEach((s) => $(s).classList.toggle('hidden', s !== id));
+  let me = null; // { pin, name, token }
+  let locked = false;
+  let tick = null;
+
+  // The token lets the server hand back the same player and score after a refresh.
+  // sessionStorage survives a refresh but is per tab, so two tabs on one device stay two players.
+  const SESSION_KEY = 'quizPlayer';
+  function saveSession(s) { try { sessionStorage.setItem(SESSION_KEY, JSON.stringify(s)); } catch {} }
+  function loadSession() { try { return JSON.parse(sessionStorage.getItem(SESSION_KEY)); } catch { return null; } }
+  function clearSession() { me = null; try { sessionStorage.removeItem(SESSION_KEY); } catch {} }
+
+  // Prefill PIN from QR link (?pin=123456)
+  const urlPin = new URLSearchParams(location.search).get('pin');
+  if (urlPin) { $('pinInput').value = urlPin; $('nameInput').focus(); }
+
+  function showWaiting(title, sub) {
+    $('waitTitle').textContent = title;
+    $('waitSub').textContent = sub;
+    show('waitScreen');
+  }
+
+  function join(pin, name) {
+    $('joinBtn').disabled = true;
+    socket.emit('student:join', { pin, name }, (res) => {
+      $('joinBtn').disabled = false;
+      if (res.error) { $('joinError').textContent = res.error; show('joinScreen'); return; }
+      me = { pin, name: res.name, token: res.token };
+      saveSession(me);
+      $('who').textContent = res.name;
+      $('joinError').textContent = '';
+      showWaiting("You're in!", 'Look at the screen. The game will start soon.');
+    });
+  }
+
+  function rejoin() {
+    socket.emit('student:rejoin', { pin: me.pin, token: me.token }, (res) => {
+      if (res.error) {
+        clearSession();
+        $('joinError').textContent = res.error;
+        show('joinScreen');
+        return;
+      }
+      $('who').textContent = res.name;
+      // During a game the server follows up with the current question, result or final screen.
+      if (res.state === 'lobby') showWaiting("You're in!", 'Look at the screen. The game will start soon.');
+    });
+  }
+
+  $('joinForm').addEventListener('submit', (e) => {
+    e.preventDefault();
+    join($('pinInput').value.trim(), $('nameInput').value.trim());
+  });
+
+  // After a refresh, pick up where we left off.
+  const saved = loadSession();
+  if (saved && saved.token && (!urlPin || urlPin === saved.pin)) {
+    me = saved;
+    showWaiting('Reconnecting…', 'Getting you back into the game.');
+  }
+
+  // Covers both the first connection after a refresh and a dropped connection (e.g. phone slept).
+  socket.on('connect', () => { if (me) rejoin(); });
+
+  function lock(choice) {
+    locked = true;
+    $('pad').classList.add('locked');
+    document.querySelectorAll('.ans').forEach((b) => b.classList.toggle('picked', +b.dataset.c === choice));
+    $('lockNote').textContent = 'Answer locked in!';
+  }
+
+  document.querySelectorAll('.ans').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      if (locked) return;
+      const choice = +btn.dataset.c;
+      lock(choice); // lock immediately, before the server answers
+      if (navigator.vibrate) navigator.vibrate(30);
+      socket.emit('student:answer', { choice, clientTs: Date.now() }, (res) => {
+        if (res && res.error) $('lockNote').textContent = res.error;
+      });
+    });
+  });
+
+  socket.on('question:start', (q) => {
+    locked = false;
+    $('pad').classList.remove('locked');
+    document.querySelectorAll('.ans').forEach((b) => b.classList.remove('picked'));
+    $('lockNote').textContent = '';
+    if (q.locked !== null && q.locked !== undefined) lock(q.locked);
+    $('qNum').textContent = q.total ? `${q.index + 1} / ${q.total}` : '';
+    show('padScreen');
+
+    const endsAt = q.endsAt + (Date.now() - q.serverNow);
+    clearInterval(tick);
+    const render = () => {
+      const left = Math.max(0, endsAt - Date.now());
+      $('time').textContent = Math.ceil(left / 1000);
+      if (left <= 0) {
+        clearInterval(tick);
+        if (!locked) { locked = true; $('pad').classList.add('locked'); $('lockNote').textContent = "Time's up!"; }
+      }
+    };
+    render();
+    tick = setInterval(render, 200);
+  });
+
+  socket.on('question:end', (r) => {
+    clearInterval(tick);
+    const badge = $('badge');
+    if (!r.answered) { badge.className = 'badge none'; badge.textContent = '–'; $('resultTitle').textContent = 'No answer'; $('resultSub').textContent = 'Be quicker next time!'; }
+    else if (r.correct) { badge.className = 'badge ok'; badge.textContent = '✓'; $('resultTitle').textContent = 'Correct!'; $('resultSub').textContent = `+${r.points} points`; }
+    else { badge.className = 'badge bad'; badge.textContent = '✕'; $('resultTitle').textContent = 'Incorrect'; $('resultSub').textContent = '+0 points'; }
+    $('scoreVal').textContent = r.score;
+    $('rankVal').textContent = `${r.rank} of ${r.totalPlayers}`;
+    $('nextNote').textContent = r.isLast ? 'That was the last question!' : 'Get ready for the next question…';
+    show('resultScreen');
+  });
+
+  socket.on('game:end', (r) => {
+    clearInterval(tick);
+    $('finalPlace').textContent = `#${r.rank}`;
+    $('finalPlace').className = `place${r.rank <= 3 ? ' top' + r.rank : ''}`;
+    $('finalTitle').textContent = r.rank === 1 ? 'You won!' : r.rank <= 3 ? 'On the podium!' : `You finished ${r.rank} of ${r.totalPlayers}`;
+    $('finalScore').textContent = r.score;
+    show('finalScreen');
+  });
+
+  socket.on('room:lobby', () => {
+    $('waitTitle').textContent = 'Get ready!';
+    $('waitSub').textContent = 'Waiting for the host to start the next round.';
+    show('waitScreen');
+  });
+
+  socket.on('room:closed', ({ reason }) => {
+    clearSession();
+    clearInterval(tick);
+    $('joinError').textContent = reason;
+    show('joinScreen');
+  });
+</script>
+</body>
+</html>
