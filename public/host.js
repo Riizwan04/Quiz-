@@ -13,14 +13,12 @@ function flash(el, text, kind = '') {
   if (text && kind !== 'err') el._t = setTimeout(() => { el.textContent = ''; }, 2500);
 }
 
-// ---------- Host key ----------
+// ---------- Connection ----------
+// The login cookie is sent with the Socket.io handshake, so no key or token is handled here.
 const params = new URLSearchParams(location.search);
-function storedKey() { try { return localStorage.getItem('hostKey') || ''; } catch { return ''; } }
-function saveKey(k) { try { localStorage.setItem('hostKey', k); } catch {} }
-if (params.get('key')) saveKey(params.get('key'));
-
-const socket = io({ auth: { hostKey: params.get('key') || storedKey() } });
+const socket = io();
 const call = (event, payload) => new Promise((resolve) => socket.emit(event, payload, resolve));
+const toLogin = () => { location.href = `/login?next=${encodeURIComponent(location.pathname + location.search)}`; };
 
 // ---------- State ----------
 let quizzes = [];          // summaries: { id, title, count }
@@ -47,28 +45,30 @@ $('tabs').addEventListener('click', (e) => {
 
 // ---------- Room ----------
 async function createRoom() {
-  const res = await call('host:create', null);
-  if (res.error) { $('gate').classList.remove('hidden'); return; }
-  $('gate').classList.add('hidden');
+  const res = await call('host:create', { quizId: selectedQuizId || params.get('quiz') });
+  if (res.auth === false) return toLogin();
+  if (res.error) return flash($('urlMsg'), res.error, 'err');
   $('pin').textContent = res.pin;
   $('joinUrl').value = res.baseUrl;
+  $('who').textContent = res.email;
   showQr(res);
   quizzes = res.quizzes;
   selectedQuizId = res.selectedQuizId;
   renderQuizzes();
-  showView('lobby');
+  // Opened from the dashboard's Edit / Create buttons: go straight to the editor.
+  if (params.get('view') === 'creator' && !editingQuiz && params.get('quiz')) {
+    await openQuiz(params.get('quiz'));
+    showView('creator');
+  } else if ($('creator').classList.contains('hidden')) {
+    showView('lobby');
+  }
 }
 socket.on('connect', createRoom);
 
-$('gateForm').addEventListener('submit', (e) => {
-  e.preventDefault();
-  const key = $('gateKey').value.trim();
-  saveKey(key);
-  socket.auth.hostKey = key;
-  flash($('gateMsg'), 'Checking…');
-  socket.disconnect().connect();
-  setTimeout(() => { if (!$('gate').classList.contains('hidden')) flash($('gateMsg'), 'That key did not work.', 'err'); }, 1500);
-});
+$('logoutBtn').onclick = async () => {
+  await fetch('/api/auth/logout', { method: 'POST' });
+  location.href = '/login';
+};
 
 function showQr({ joinUrl, qr }) {
   $('qr').src = qr;
@@ -313,9 +313,10 @@ $('importFile').onchange = async (e) => {
   try {
     const res = await fetch(`/api/import?name=${encodeURIComponent(file.name)}`, {
       method: 'POST',
-      headers: { 'x-host-key': socket.auth.hostKey || '', 'content-type': 'application/octet-stream' },
+      headers: { 'content-type': 'application/octet-stream' },
       body: file,
     });
+    if (res.status === 401) return toLogin();
     showPreview(await res.json());
   } catch {
     flash($('importMsg'), 'Upload failed.', 'err');

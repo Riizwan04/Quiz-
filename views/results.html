@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Past Results</title>
+<link rel="stylesheet" href="/pages.css">
+</head>
+<body>
+  <nav class="nav">
+    <a class="brand" href="/host/dashboard">Quiz<span>.</span></a>
+    <span class="grow"></span>
+    <span class="who" id="who"></span>
+    <button class="btn btn-sm" id="logout">Log out</button>
+  </nav>
+
+  <main>
+    <div class="head">
+      <h1>Past results</h1>
+      <div class="actions"><a class="btn" href="/host/dashboard">← Dashboard</a></div>
+    </div>
+    <div class="msg" id="msg" role="alert"></div>
+    <div id="list"></div>
+  </main>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const sec = (ms) => (ms === null || ms === undefined ? '–' : `${(ms / 1000).toFixed(2)}s`);
+
+  async function api(path, options = {}) {
+    const res = await fetch(path, options);
+    if (res.status === 401) { location.href = '/login?next=/host/results'; throw new Error('Please log in.'); }
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || 'Something went wrong.');
+    return data;
+  }
+
+  function render(results) {
+    if (!results.length) {
+      $('list').innerHTML = '<div class="empty-state">No finished games yet. Results are saved here when a game reaches the final podium.</div>';
+      return;
+    }
+    $('list').innerHTML = results.map((r, i) => {
+      const date = new Date(r.date);
+      const winner = r.scores[0];
+      const rows = r.scores.map((s) => `
+        <tr><td class="rank">#${s.rank}</td><td>${esc(s.name)}</td>
+        <td class="num">${s.points}</td><td class="num">${s.accuracy}%</td>
+        <td class="num hide-sm">${s.correct}/${s.total}</td><td class="num hide-sm">${sec(s.fastestMs)}</td></tr>`).join('');
+      return `<details class="result"${i === 0 ? ' open' : ''}>
+        <summary>
+          <div><h2>${esc(r.quizTitle || 'Untitled quiz')}</h2>
+          <div class="meta">${date.toLocaleDateString()} ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} · PIN ${esc(r.roomPin)} · ${r.scores.length} player${r.scores.length === 1 ? '' : 's'}</div></div>
+          <div class="winner">${winner ? `Winner <b>${esc(winner.name)}</b> · ${winner.points} pts` : 'No players'}</div>
+          <span class="chev">›</span>
+        </summary>
+        ${r.scores.length ? `<table>
+          <thead><tr><th>#</th><th>Name</th><th class="num">Points</th><th class="num">Accuracy</th><th class="num hide-sm">Correct</th><th class="num hide-sm">Fastest</th></tr></thead>
+          <tbody>${rows}</tbody></table>` : ''}
+      </details>`;
+    }).join('');
+  }
+
+  (async () => {
+    try {
+      const [me, results] = await Promise.all([api('/api/me'), api('/api/results')]);
+      $('who').textContent = me.email;
+      render(results);
+    } catch (err) {
+      $('msg').textContent = err.message;
+    }
+  })();
+
+  $('logout').onclick = async () => {
+    await fetch('/api/auth/logout', { method: 'POST' });
+    location.href = '/login';
+  };
+</script>
+</body>
+</html>

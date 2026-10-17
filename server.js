@@ -6,11 +6,16 @@ const crypto = require('crypto');
 const { Server } = require('socket.io');
 const QRCode = require('qrcode');
 const { parseText, parseFile, normalizeQuestion } = require('./importer');
+const db = require('./db');
+const { Quiz, Result, User } = db;
+const auth = require('./auth');
 
-const PORT = 3000;
-// Host access: the host page works without a key from this computer (localhost).
-// From any other device it needs this key, so students can't open /host and read the answers.
-const HOST_KEY = process.env.HOST_KEY || crypto.randomBytes(3).toString('hex');
+const PORT = Number(process.env.PORT) || 3000;
+const MONGODB_URI = process.env.MONGODB_URI;
+if (!MONGODB_URI) {
+  console.error('\n  MONGODB_URI is not set. Add your MongoDB connection string to the environment (e.g. Render > Environment) and restart.\n');
+  process.exit(1);
+}
 
 function getLocalIp() {
   for (const ifaces of Object.values(os.networkInterfaces())) {
@@ -22,51 +27,143 @@ function getLocalIp() {
 }
 
 const LOCAL_IP = getLocalIp();
-const DEFAULT_JOIN_URL = `http://${LOCAL_IP}:${PORT}/`;
+// On Render the public URL comes from RENDER_EXTERNAL_URL; PUBLIC_URL overrides it anywhere.
+const PUBLIC_URL = (process.env.PUBLIC_URL || process.env.RENDER_EXTERNAL_URL || '').replace(/\/+$/, '');
+const DEFAULT_JOIN_URL = PUBLIC_URL ? `${PUBLIC_URL}/` : `http://${LOCAL_IP}:${PORT}/`;
 
-function isLocalAddress(addr = '') {
-  return addr === '127.0.0.1' || addr === '::1' || addr === '::ffff:127.0.0.1';
+// ---------- Quiz storage (MongoDB, scoped to the logged-in host) ----------
+// The database stores the time limit as `timeLimit`; the game code calls it `duration`.
+function toAppQuestion(q) {
+  return { text: q.text, options: [...q.options], correctIndex: q.correctIndex, duration: q.timeLimit };
+}
+function toDbQuestion(q) {
+  return { text: q.text, options: q.options, correctIndex: q.correctIndex, timeLimit: q.duration };
+}
+function toAppQuiz(doc) {
+  return { id: String(doc._id), title: doc.title, questions: doc.questions.map(toAppQuestion), createdAt: doc.createdAt };
 }
 
-function isHostRequest(addr, key) {
-  return isLocalAddress(addr) || (typeof key === 'string' && key === HOST_KEY);
+async function findOwnQuiz(userId, quizId) {
+  if (!db.mongoose.isValidObjectId(quizId)) return null;
+  return Quiz.findOne({ _id: quizId, hostId: userId });
 }
 
-// ---------- In-memory quiz storage ----------
-const quizzes = new Map(); // id -> { id, title, questions: [...] }
-
-function newId() {
-  return crypto.randomBytes(6).toString('hex');
+async function quizSummaries(userId) {
+  const docs = await Quiz.find({ hostId: userId }).sort({ createdAt: -1 }).lean();
+  return docs.map((q) => ({ id: String(q._id), title: q.title, count: q.questions.length, createdAt: q.createdAt }));
 }
 
-function createQuiz(title, questions = []) {
-  const quiz = { id: newId(), title: String(title || 'Untitled quiz').trim().slice(0, 80) || 'Untitled quiz', questions };
-  quizzes.set(quiz.id, quiz);
-  return quiz;
-}
-
-createQuiz('Sample: Space', [
+const SAMPLE_QUESTIONS = [
   { text: 'Which planet is known as the Red Planet?', options: ['Venus', 'Mars', 'Jupiter', 'Saturn'], correctIndex: 1, duration: 20 },
   { text: 'What is the largest planet in our solar system?', options: ['Earth', 'Saturn', 'Jupiter', 'Neptune'], correctIndex: 2, duration: 20 },
   { text: 'How many moons does Earth have?', options: ['1', '2', '0', '4'], correctIndex: 0, duration: 10 },
-]);
+];
 
-function quizSummaries() {
-  return [...quizzes.values()].map((q) => ({ id: q.id, title: q.title, count: q.questions.length }));
+function cleanTitle(title) {
+  return String(title || '').trim().slice(0, 80) || 'Untitled quiz';
 }
 
 // ---------- HTTP ----------
 const app = express();
+app.set('trust proxy', 1); // Render terminates HTTPS in front of the app
 const server = http.createServer(app);
 const io = new Server(server, { maxHttpBufferSize: 2e6 });
+const view = (name) => (req, res) => res.sendFile(path.join(__dirname, 'views', name));
+const json = express.json({ limit: '100kb' });
+const apiAuth = auth.requireAuth({ api: true });
+const pageAuth = auth.requireAuth();
+const wrap = (fn) => (req, res) => fn(req, res).catch((err) => {
+  console.error('[api]', err);
+  res.status(500).json({ error: 'Something went wrong. Please try again.' });
+});
 
-app.get('/host', (req, res) => res.sendFile(path.join(__dirname, 'public', 'host.html')));
-app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'public', 'student.html')));
+// Students: no login, ever.
+app.get('/', view('student.html'));
+
+// Host auth pages: skip straight to the dashboard when already logged in.
+const authPage = (req, res, next) => (auth.userFromCookieHeader(req.headers.cookie) ? res.redirect('/host/dashboard') : next());
+app.get('/login', authPage, view('auth.html'));
+app.get('/register', authPage, view('auth.html'));
+
+// Host pages (JWT cookie required)
+app.get('/host', (req, res) => res.redirect('/host/dashboard'));
+app.get('/host/dashboard', pageAuth, view('dashboard.html'));
+app.get('/host/session', pageAuth, view('host.html'));
+app.get('/host/results', pageAuth, view('results.html'));
+
 app.use(express.static(path.join(__dirname, 'public'), { index: false }));
 
+// ---------- Auth API ----------
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+app.post('/api/auth/register', json, wrap(async (req, res) => {
+  const email = String(req.body?.email || '').trim().toLowerCase();
+  const password = String(req.body?.password || '');
+  if (!EMAIL_RE.test(email)) return res.status(400).json({ error: 'Enter a valid email address.' });
+  if (password.length < 8) return res.status(400).json({ error: 'Use a password of at least 8 characters.' });
+  if (await User.exists({ email })) return res.status(409).json({ error: 'An account with that email already exists. Log in instead.' });
+  let user;
+  try {
+    user = await User.create({ email, password: await auth.hashPassword(password) });
+  } catch (err) {
+    if (err.code === 11000) return res.status(409).json({ error: 'An account with that email already exists. Log in instead.' });
+    throw err;
+  }
+  // Give every new host a quiz to try straight away.
+  await Quiz.create({ hostId: user._id, title: 'Sample: Space', questions: SAMPLE_QUESTIONS.map(toDbQuestion) });
+  auth.setAuthCookie(res, user);
+  res.status(201).json({ ok: true, email: user.email });
+}));
+
+app.post('/api/auth/login', json, wrap(async (req, res) => {
+  const email = String(req.body?.email || '').trim().toLowerCase();
+  const password = String(req.body?.password || '');
+  const user = await User.findOne({ email });
+  if (!user || !(await auth.checkPassword(password, user.password))) {
+    return res.status(401).json({ error: 'Wrong email or password.' });
+  }
+  auth.setAuthCookie(res, user);
+  res.json({ ok: true, email: user.email });
+}));
+
+app.post('/api/auth/logout', (req, res) => {
+  auth.clearAuthCookie(res);
+  res.json({ ok: true });
+});
+
+app.get('/api/me', apiAuth, (req, res) => res.json({ email: req.user.email }));
+
+// ---------- Dashboard API ----------
+app.get('/api/quizzes', apiAuth, wrap(async (req, res) => res.json(await quizSummaries(req.user.id))));
+
+app.post('/api/quizzes', apiAuth, json, wrap(async (req, res) => {
+  const doc = await Quiz.create({ hostId: req.user.id, title: cleanTitle(req.body?.title) });
+  res.status(201).json({ id: String(doc._id), title: doc.title });
+}));
+
+app.delete('/api/quizzes/:id', apiAuth, wrap(async (req, res) => {
+  const doc = await findOwnQuiz(req.user.id, req.params.id);
+  if (!doc) return res.status(404).json({ error: 'Quiz not found.' });
+  await doc.deleteOne();
+  for (const room of rooms.values()) if (room.quizId === req.params.id) room.quizId = null;
+  broadcastQuizzes(req.user.id);
+  res.json({ ok: true });
+}));
+
+app.get('/api/results', apiAuth, wrap(async (req, res) => {
+  const docs = await Result.find({ hostId: req.user.id }).sort({ date: -1 }).limit(200).lean();
+  res.json(docs.map((r) => ({
+    id: String(r._id),
+    quizId: r.quizId ? String(r.quizId) : null,
+    quizTitle: r.quizTitle,
+    roomPin: r.roomPin,
+    date: r.date,
+    scores: r.scores,
+  })));
+}));
+
 // File import (PDF, XLSX, CSV, JSON, TXT). Body is the raw file; returns a preview, nothing is saved yet.
-app.post('/api/import', express.raw({ type: () => true, limit: '10mb' }), async (req, res) => {
-  if (!isHostRequest(req.socket.remoteAddress, req.get('x-host-key'))) return res.status(403).json({ errors: ['Host key required.'] });
+app.post('/api/import', apiAuth, express.raw({ type: () => true, limit: '10mb' }), async (req, res) => {
   try {
     const result = await parseFile(req.body, String(req.query.name || ''));
     res.json(result);
@@ -256,8 +353,41 @@ function endQuestion(room) {
 function finishGame(room) {
   clearTimeout(room.timer);
   room.state = 'finished';
-  io.to(room.hostId).emit('game:end', { leaderboard: leaderboard(room), title: room.quizTitle });
+  const board = leaderboard(room);
+  io.to(room.hostId).emit('game:end', { leaderboard: board, title: room.quizTitle });
   for (const p of room.players.values()) emitToPlayer(p, 'game:end', studentFinalPayload(room, p));
+  saveResult(room, board);
+}
+
+// Saves the final scoreboard. Runs after the podium is already on screen, so a slow or
+// unavailable database never holds up the game; failures are logged and retried a few times.
+function saveResult(room, board, attempt = 1) {
+  if (room.resultSaved) return;
+  room.resultSaved = true;
+  const total = room.questions.length;
+  const doc = {
+    quizId: db.mongoose.isValidObjectId(room.quizId) ? room.quizId : undefined,
+    hostId: room.hostUserId,
+    quizTitle: room.quizTitle,
+    roomPin: room.pin,
+    scores: board.map((p) => ({
+      rank: p.rank,
+      name: p.name,
+      points: p.score,
+      accuracy: total ? Math.round((p.correctCount / total) * 100) : 0,
+      correct: p.correctCount,
+      total,
+      fastestMs: p.fastestMs,
+    })),
+    date: new Date(),
+  };
+  Result.create(doc).catch((err) => {
+    console.error(`[db] Could not save result for room ${room.pin} (attempt ${attempt}):`, err.message);
+    if (attempt < 5) {
+      room.resultSaved = false;
+      setTimeout(() => saveResult(room, board, attempt + 1), attempt * 5000);
+    }
+  });
 }
 
 function closeRoom(room, reason) {
@@ -267,32 +397,46 @@ function closeRoom(room, reason) {
   rooms.delete(room.pin);
 }
 
-function broadcastQuizzes() {
-  io.to('hosts').emit('quiz:list', quizSummaries());
+// Keeps every open tab of the same host in sync after a quiz changes.
+function broadcastQuizzes(userId) {
+  quizSummaries(userId)
+    .then((list) => io.to(`user:${userId}`).emit('quiz:list', list))
+    .catch((err) => console.error('[db] quiz list:', err.message));
 }
 
 io.on('connection', (socket) => {
-  const isHost = isHostRequest(socket.handshake.address, socket.handshake.auth?.hostKey);
+  // A host is whoever holds a valid login cookie. Students never have one, so they
+  // can't reach any quiz content or control a room.
+  const user = auth.userFromCookieHeader(socket.handshake.headers.cookie);
+  socket.data.userId = user?.id || null;
 
-  // Wraps a host-only handler: students can't touch quizzes or rooms.
-  const hostOnly = (handler) => (...args) => {
+  // Wraps a host-only handler: checks login and turns database errors into a readable ack.
+  const hostOnly = (handler) => async (...args) => {
     const ack = typeof args[args.length - 1] === 'function' ? args[args.length - 1] : null;
-    if (!isHost) return ack?.({ error: 'Host key required.' });
-    return handler(...args);
+    if (!user) return ack?.({ error: 'Please log in again.', auth: false });
+    try {
+      return await handler(...args);
+    } catch (err) {
+      console.error('[host]', err);
+      ack?.({ error: 'Could not reach the database. Please try again.' });
+    }
   };
   const hostRoom = () => rooms.get(socket.data.hostPin);
+  const ownQuiz = (quizId) => findOwnQuiz(user.id, quizId);
+  const pushList = () => broadcastQuizzes(user.id);
 
   // ---------- Host: room ----------
-  socket.on('host:create', hostOnly(async (_, ack) => {
-    socket.join('hosts');
+  socket.on('host:create', hostOnly(async ({ quizId } = {}, ack) => {
+    socket.join(`user:${user.id}`);
+    const quizzes = await quizSummaries(user.id);
     const pin = generatePin();
-    const firstQuiz = quizzes.values().next().value;
     const room = {
       pin,
       hostId: socket.id,
+      hostUserId: user.id,
       players: new Map(),
       state: 'lobby',
-      quizId: firstQuiz?.id || null,
+      quizId: quizzes.some((q) => q.id === quizId) ? quizId : quizzes[0]?.id || null,
       questions: [],
       questionIndex: 0,
       timer: null,
@@ -301,7 +445,7 @@ io.on('connection', (socket) => {
     rooms.set(pin, room);
     socket.data.hostPin = pin;
     const { joinUrl, qr } = await buildQr(room, DEFAULT_JOIN_URL);
-    ack?.({ pin, baseUrl: DEFAULT_JOIN_URL, joinUrl, qr, quizzes: quizSummaries(), selectedQuizId: room.quizId });
+    ack?.({ pin, baseUrl: DEFAULT_JOIN_URL, joinUrl, qr, quizzes, selectedQuizId: room.quizId, email: user.email });
   }));
 
   socket.on('host:setJoinUrl', hostOnly(async ({ url } = {}, ack) => {
@@ -311,26 +455,27 @@ io.on('connection', (socket) => {
       const { joinUrl, qr } = await buildQr(room, String(url || '').trim());
       ack?.({ joinUrl, qr });
     } catch {
-      ack?.({ error: 'Enter a full URL, e.g. http://192.168.1.10:3000/' });
+      ack?.({ error: 'Enter a full URL, e.g. https://your-app.onrender.com/' });
     }
   }));
 
-  socket.on('host:selectQuiz', hostOnly(({ quizId } = {}, ack) => {
+  socket.on('host:selectQuiz', hostOnly(async ({ quizId } = {}, ack) => {
     const room = hostRoom();
-    if (!room || !quizzes.has(quizId)) return ack?.({ error: 'Quiz not found' });
+    if (!room || !(await ownQuiz(quizId))) return ack?.({ error: 'Quiz not found' });
     room.quizId = quizId;
     ack?.({ ok: true });
   }));
 
-  socket.on('host:start', hostOnly((_, ack) => {
+  socket.on('host:start', hostOnly(async (_, ack) => {
     const room = hostRoom();
     if (!room || room.state === 'question') return ack?.({ error: 'Game already running' });
-    const quiz = quizzes.get(room.quizId);
-    if (!quiz || !quiz.questions.length) return ack?.({ error: 'Pick a quiz with at least one question.' });
-    // Snapshot the questions so editing the quiz mid-game can't break the running game.
-    room.questions = quiz.questions.map((q) => ({ ...q, options: [...q.options] }));
-    room.quizTitle = quiz.title;
+    const doc = await ownQuiz(room.quizId);
+    if (!doc || !doc.questions.length) return ack?.({ error: 'Pick a quiz with at least one question.' });
+    // Snapshot the questions so editing the quiz (or a database hiccup) can't affect the running game.
+    room.questions = doc.questions.map(toAppQuestion);
+    room.quizTitle = doc.title;
     room.questionIndex = 0;
+    room.resultSaved = false;
     for (const p of room.players.values()) resetPlayer(p);
     startQuestion(room);
     ack?.({ ok: true });
@@ -363,77 +508,86 @@ io.on('connection', (socket) => {
     io.to(`players:${room.pin}`).emit('room:lobby');
   }));
 
-  // ---------- Host: quiz management ----------
-  socket.on('quiz:list', hostOnly((_, ack) => ack?.(quizSummaries())));
+  // ---------- Host: quiz management (always scoped to the logged-in host) ----------
+  socket.on('quiz:list', hostOnly(async (_, ack) => ack?.(await quizSummaries(user.id))));
 
-  socket.on('quiz:get', hostOnly(({ quizId } = {}, ack) => {
-    const quiz = quizzes.get(quizId);
-    ack?.(quiz ? { quiz } : { error: 'Quiz not found' });
+  socket.on('quiz:get', hostOnly(async ({ quizId } = {}, ack) => {
+    const doc = await ownQuiz(quizId);
+    ack?.(doc ? { quiz: toAppQuiz(doc) } : { error: 'Quiz not found' });
   }));
 
-  socket.on('quiz:create', hostOnly(({ title } = {}, ack) => {
-    const quiz = createQuiz(title);
-    broadcastQuizzes();
-    ack?.({ quiz });
+  socket.on('quiz:create', hostOnly(async ({ title } = {}, ack) => {
+    const doc = await Quiz.create({ hostId: user.id, title: cleanTitle(title) });
+    pushList();
+    ack?.({ quiz: toAppQuiz(doc) });
   }));
 
-  socket.on('quiz:rename', hostOnly(({ quizId, title } = {}, ack) => {
-    const quiz = quizzes.get(quizId);
+  socket.on('quiz:rename', hostOnly(async ({ quizId, title } = {}, ack) => {
+    const doc = await ownQuiz(quizId);
     const t = String(title || '').trim().slice(0, 80);
-    if (!quiz || !t) return ack?.({ error: 'Enter a title.' });
-    quiz.title = t;
-    broadcastQuizzes();
-    ack?.({ quiz });
+    if (!doc || !t) return ack?.({ error: 'Enter a title.' });
+    doc.title = t;
+    await doc.save();
+    pushList();
+    ack?.({ quiz: toAppQuiz(doc) });
   }));
 
-  socket.on('quiz:delete', hostOnly(({ quizId } = {}, ack) => {
-    if (!quizzes.delete(quizId)) return ack?.({ error: 'Quiz not found' });
+  socket.on('quiz:delete', hostOnly(async ({ quizId } = {}, ack) => {
+    const doc = await ownQuiz(quizId);
+    if (!doc) return ack?.({ error: 'Quiz not found' });
+    await doc.deleteOne();
     for (const room of rooms.values()) if (room.quizId === quizId) room.quizId = null;
-    broadcastQuizzes();
+    pushList();
     ack?.({ ok: true });
   }));
 
   // Add one question, or replace one when `index` is given.
-  socket.on('quiz:saveQuestion', hostOnly(({ quizId, index, question } = {}, ack) => {
-    const quiz = quizzes.get(quizId);
-    if (!quiz) return ack?.({ error: 'Quiz not found' });
+  socket.on('quiz:saveQuestion', hostOnly(async ({ quizId, index, question } = {}, ack) => {
+    const doc = await ownQuiz(quizId);
+    if (!doc) return ack?.({ error: 'Quiz not found' });
     const res = normalizeQuestion({ ...question, correct: question?.correctIndex });
     if (res.error) return ack?.({ error: res.error });
-    if (Number.isInteger(index) && index >= 0 && index < quiz.questions.length) quiz.questions[index] = res.question;
-    else quiz.questions.push(res.question);
-    broadcastQuizzes();
-    ack?.({ quiz });
+    if (Number.isInteger(index) && index >= 0 && index < doc.questions.length) doc.questions.set(index, toDbQuestion(res.question));
+    else doc.questions.push(toDbQuestion(res.question));
+    await doc.save();
+    pushList();
+    ack?.({ quiz: toAppQuiz(doc) });
   }));
 
-  socket.on('quiz:deleteQuestion', hostOnly(({ quizId, index } = {}, ack) => {
-    const quiz = quizzes.get(quizId);
-    if (!quiz || !quiz.questions[index]) return ack?.({ error: 'Question not found' });
-    quiz.questions.splice(index, 1);
-    broadcastQuizzes();
-    ack?.({ quiz });
+  socket.on('quiz:deleteQuestion', hostOnly(async ({ quizId, index } = {}, ack) => {
+    const doc = await ownQuiz(quizId);
+    if (!doc || !doc.questions[index]) return ack?.({ error: 'Question not found' });
+    doc.questions.splice(index, 1);
+    await doc.save();
+    pushList();
+    ack?.({ quiz: toAppQuiz(doc) });
   }));
 
-  socket.on('quiz:moveQuestion', hostOnly(({ quizId, index, dir } = {}, ack) => {
-    const quiz = quizzes.get(quizId);
+  socket.on('quiz:moveQuestion', hostOnly(async ({ quizId, index, dir } = {}, ack) => {
+    const doc = await ownQuiz(quizId);
     const to = index + (dir < 0 ? -1 : 1);
-    if (!quiz || !quiz.questions[index] || !quiz.questions[to]) return ack?.({ error: 'Cannot move' });
-    [quiz.questions[index], quiz.questions[to]] = [quiz.questions[to], quiz.questions[index]];
-    ack?.({ quiz });
+    if (!doc || !doc.questions[index] || !doc.questions[to]) return ack?.({ error: 'Cannot move' });
+    const list = doc.questions.map((q) => q.toObject());
+    [list[index], list[to]] = [list[to], list[index]];
+    doc.questions = list;
+    await doc.save();
+    ack?.({ quiz: toAppQuiz(doc) });
   }));
 
   // Parse pasted text (JSON or structured text) into a preview; nothing is saved yet.
   socket.on('import:parse', hostOnly(({ text } = {}, ack) => ack?.(parseText(text))));
 
-  socket.on('quiz:addQuestions', hostOnly(({ quizId, questions } = {}, ack) => {
-    const quiz = quizzes.get(quizId);
-    if (!quiz) return ack?.({ error: 'Quiz not found' });
+  socket.on('quiz:addQuestions', hostOnly(async ({ quizId, questions } = {}, ack) => {
+    const doc = await ownQuiz(quizId);
+    if (!doc) return ack?.({ error: 'Quiz not found' });
     const valid = (Array.isArray(questions) ? questions : [])
       .map((q) => normalizeQuestion({ ...q, correct: q?.correctIndex }))
       .filter((r) => r.question)
-      .map((r) => r.question);
-    quiz.questions.push(...valid);
-    broadcastQuizzes();
-    ack?.({ quiz, added: valid.length });
+      .map((r) => toDbQuestion(r.question));
+    doc.questions.push(...valid);
+    await doc.save();
+    pushList();
+    ack?.({ quiz: toAppQuiz(doc), added: valid.length });
   }));
 
   // ---------- Student ----------
@@ -547,10 +701,17 @@ io.on('connection', (socket) => {
   });
 });
 
-server.listen(PORT, () => {
-  console.log('\n  Quiz engine running');
-  console.log(`  Local network IP: ${LOCAL_IP}`);
-  console.log(`  Host view (this computer): http://localhost:${PORT}/host`);
-  console.log(`  Host view (other devices): http://${LOCAL_IP}:${PORT}/host?key=${HOST_KEY}`);
-  console.log(`  Student view:              http://${LOCAL_IP}:${PORT}/\n`);
-});
+db.connect(MONGODB_URI)
+  .then(() => {
+    server.listen(PORT, () => {
+      console.log('\n  Quiz engine running');
+      console.log('  MongoDB connected');
+      console.log(`  Local network IP: ${LOCAL_IP}`);
+      console.log(`  Students join at: ${DEFAULT_JOIN_URL}`);
+      console.log(`  Hosts log in at:  ${DEFAULT_JOIN_URL}login\n`);
+    });
+  })
+  .catch((err) => {
+    console.error(`\n  Could not connect to MongoDB: ${err.message}\n  Check MONGODB_URI and that the database allows connections from this server.\n`);
+    process.exit(1);
+  });

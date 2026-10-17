@@ -8,6 +8,7 @@
 </head>
 <body>
   <div class="topbar">
+    <a class="btn btn-sm back" href="/host/dashboard" title="Back to dashboard">← Dashboard</a>
     <div class="tabs" id="tabs">
       <button class="tab active" data-view="lobby">Lobby</button>
       <button class="tab" data-view="creator">Quiz Creator</button>
@@ -16,6 +17,8 @@
     <input id="joinUrl" type="url" placeholder="http://192.168.1.10:3000/" autocomplete="off">
     <button class="btn" id="updateQr">Update QR</button>
     <span class="msg" id="urlMsg"></span>
+    <span class="who" id="who"></span>
+    <button class="btn btn-sm" id="logoutBtn">Log out</button>
   </div>
 
   <main>
@@ -165,20 +168,13 @@ Answer: C, Time: 20'></textarea>
       <div class="podium" id="podium"></div>
       <div class="board final-rest"><div id="finalRows"></div></div>
       <div class="confetti" id="confetti"></div>
-      <div class="actions final-actions"><button class="btn btn-primary" id="finalLobbyBtn">Play Again / Reset</button></div>
+      <div class="actions final-actions">
+        <a class="btn" href="/host/results" target="_blank" rel="noopener">View past results</a>
+        <button class="btn btn-primary" id="finalLobbyBtn">Play Again / Reset</button>
+      </div>
+      <p class="muted final-actions" style="font-size:13px">Final scores are saved to your past results.</p>
     </section>
   </main>
-
-  <div class="gate hidden" id="gate">
-    <form id="gateForm">
-      <h1>Host key needed</h1>
-      <p class="muted" style="margin:0">This page controls the quiz. Enter the host key printed in the server console when it started.</p>
-      <input id="gateKey" placeholder="Host key" autocomplete="off" required>
-      <button class="btn btn-primary" type="submit">Continue</button>
-      <span class="msg err" id="gateMsg"></span>
-      <a href="/" class="muted" style="font-size:14px;text-align:center">Joining as a student? Go to the join page</a>
-    </form>
-  </div>
 
 <script src="/socket.io/socket.io.js"></script>
 <script src="/host.js"></script>

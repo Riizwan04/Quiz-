@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Host Login</title>
+<link rel="stylesheet" href="/pages.css">
+</head>
+<body>
+  <div class="auth-wrap">
+    <form class="auth" id="form" novalidate>
+      <a class="brand" href="/">Quiz<span>.</span></a>
+      <h1 id="title">Log in to host</h1>
+      <p class="sub" id="sub">Manage your quizzes and run live games.</p>
+      <label for="email">Email</label>
+      <input id="email" type="email" autocomplete="email" required>
+      <label for="password">Password</label>
+      <input id="password" type="password" autocomplete="current-password" minlength="8" required>
+      <button class="btn btn-primary" id="submit" type="submit">Log in</button>
+      <div class="error" id="error" role="alert"></div>
+      <div class="switch" id="switch"></div>
+    </form>
+  </div>
+<script>
+  const $ = (id) => document.getElementById(id);
+  const isRegister = location.pathname.startsWith('/register');
+  const next = new URLSearchParams(location.search).get('next');
+  // Only follow same-site paths after login.
+  const target = next && next.startsWith('/') && !next.startsWith('//') ? next : '/host/dashboard';
+  const keep = next ? `?next=${encodeURIComponent(next)}` : '';
+
+  if (isRegister) {
+    document.title = 'Create Host Account';
+    $('title').textContent = 'Create a host account';
+    $('sub').textContent = 'Students never need an account, only hosts do.';
+    $('password').autocomplete = 'new-password';
+    $('password').placeholder = 'At least 8 characters';
+    $('submit').textContent = 'Create account';
+    $('switch').innerHTML = `Already have an account? <a href="/login${keep}">Log in</a>`;
+  } else {
+    $('switch').innerHTML = `New here? <a href="/register${keep}">Create an account</a>`;
+  }
+
+  $('form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    $('error').textContent = '';
+    const email = $('email').value.trim();
+    const password = $('password').value;
+    if (!email || !password) { $('error').textContent = 'Enter your email and password.'; return; }
+    $('submit').disabled = true;
+    try {
+      const res = await fetch(isRegister ? '/api/auth/register' : '/api/auth/login', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ email, password }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Something went wrong. Please try again.');
+      location.href = target;
+    } catch (err) {
+      $('error').textContent = err.message;
+      $('submit').disabled = false;
+    }
+  });
+</script>
+</body>
+</html>

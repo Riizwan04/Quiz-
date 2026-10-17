@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Host Dashboard</title>
+<link rel="stylesheet" href="/pages.css">
+</head>
+<body>
+  <nav class="nav">
+    <a class="brand" href="/host/dashboard">Quiz<span>.</span></a>
+    <span class="grow"></span>
+    <span class="who" id="who"></span>
+    <button class="btn btn-sm" id="logout">Log out</button>
+  </nav>
+
+  <main>
+    <div class="head">
+      <h1>Your quizzes</h1>
+      <div class="actions">
+        <a class="btn" href="/host/results">View Past Results</a>
+        <button class="btn btn-primary" id="newBtn">+ Create New Quiz</button>
+      </div>
+    </div>
+
+    <form class="new-quiz hidden" id="newForm">
+      <input id="newTitle" maxlength="80" placeholder="Quiz title, e.g. Year 9 Science" required>
+      <button class="btn btn-primary" type="submit">Create</button>
+      <button class="btn" type="button" id="cancelNew">Cancel</button>
+    </form>
+    <div class="msg" id="msg" role="alert"></div>
+
+    <div class="quiz-grid" id="grid"></div>
+  </main>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+  async function api(path, options = {}) {
+    const res = await fetch(path, { headers: { 'content-type': 'application/json' }, ...options });
+    if (res.status === 401) { location.href = '/login?next=/host/dashboard'; throw new Error('Please log in.'); }
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || 'Something went wrong.');
+    return data;
+  }
+
+  function render(quizzes) {
+    $('grid').innerHTML = quizzes.length ? quizzes.map((q) => `
+      <div class="quiz-card">
+        <div>
+          <h2>${esc(q.title)}</h2>
+          <div class="meta">${q.count} question${q.count === 1 ? '' : 's'} · created ${new Date(q.createdAt).toLocaleDateString()}</div>
+        </div>
+        <div class="row">
+          <a class="btn btn-primary" href="/host/session?quiz=${q.id}" ${q.count ? '' : 'aria-disabled="true" title="Add questions first"'}>Launch Session</a>
+          <a class="btn" href="/host/session?quiz=${q.id}&view=creator">Edit</a>
+          <button class="btn btn-danger" data-del="${q.id}" data-title="${esc(q.title)}">Delete</button>
+        </div>
+      </div>`).join('')
+      : '<div class="empty-state">No quizzes yet. Press <b>Create New Quiz</b> to make your first one.</div>';
+  }
+
+  async function load() {
+    try {
+      const [me, quizzes] = await Promise.all([api('/api/me'), api('/api/quizzes')]);
+      $('who').textContent = me.email;
+      render(quizzes);
+    } catch (err) {
+      $('msg').textContent = err.message;
+    }
+  }
+
+  $('newBtn').onclick = () => { $('newForm').classList.remove('hidden'); $('newTitle').focus(); };
+  $('cancelNew').onclick = () => $('newForm').classList.add('hidden');
+  $('newForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    try {
+      const quiz = await api('/api/quizzes', { method: 'POST', body: JSON.stringify({ title: $('newTitle').value }) });
+      location.href = `/host/session?quiz=${quiz.id}&view=creator`;
+    } catch (err) {
+      $('msg').textContent = err.message;
+    }
+  });
+
+  $('grid').addEventListener('click', async (e) => {
+    const launch = e.target.closest('a[aria-disabled="true"]');
+    if (launch) { e.preventDefault(); $('msg').textContent = 'Add at least one question before launching this quiz.'; return; }
+    const del = e.target.closest('[data-del]');
+    if (!del || !confirm(`Delete "${del.dataset.title}" and all its questions?`)) return;
+    try {
+      await api(`/api/quizzes/${del.dataset.del}`, { method: 'DELETE' });
+      load();
+    } catch (err) {
+      $('msg').textContent = err.message;
+    }
+  });
+
+  $('logout').onclick = async () => {
+    await fetch('/api/auth/logout', { method: 'POST' });
+    location.href = '/login';
+  };
+
+  load();
+</script>
+</body>
+</html>
