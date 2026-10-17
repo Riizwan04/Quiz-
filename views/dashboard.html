@@ -6,27 +6,33 @@
 <title>Host Dashboard</title>
 <link rel="stylesheet" href="/pages.css">
 </head>
-<body>
+<body class="dash">
   <nav class="nav">
     <a class="brand" href="/host/dashboard">Quiz<span>.</span></a>
     <span class="grow"></span>
     <span class="who" id="who"></span>
-    <button class="btn btn-sm" id="logout">Log out</button>
+    <button class="btn btn-ghost btn-sm" id="logout">Log out</button>
   </nav>
 
   <main>
+    <section class="stats" id="stats" aria-label="Your stats">
+      <div class="stat" style="--i:0"><span class="stat-icon" aria-hidden="true">📚</span><div><div class="stat-num" id="statQuizzes">–</div><div class="stat-label">Quizzes created</div></div></div>
+      <div class="stat" style="--i:1"><span class="stat-icon" aria-hidden="true">🎮</span><div><div class="stat-num" id="statSessions">–</div><div class="stat-label">Sessions hosted</div></div></div>
+      <div class="stat" style="--i:2"><span class="stat-icon" aria-hidden="true">👥</span><div><div class="stat-num-row"><span class="stat-num" id="statPlayers">–</span><span class="stat-pill hidden" id="statAccuracy"></span></div><div class="stat-label">Players participated</div></div></div>
+    </section>
+
     <div class="head">
       <h1>Your quizzes</h1>
       <div class="actions">
-        <a class="btn" href="/host/results">View Past Results</a>
-        <button class="btn btn-primary" id="newBtn">+ Create New Quiz</button>
+        <a class="btn btn-ghost" href="/host/results">View Past Results</a>
+        <button class="btn btn-grad" id="newBtn">+ Create New Quiz</button>
       </div>
     </div>
 
     <form class="new-quiz hidden" id="newForm">
       <input id="newTitle" maxlength="80" placeholder="Quiz title, e.g. Year 9 Science" required>
-      <button class="btn btn-primary" type="submit">Create</button>
-      <button class="btn" type="button" id="cancelNew">Cancel</button>
+      <button class="btn btn-grad" type="submit">Create</button>
+      <button class="btn btn-ghost" type="button" id="cancelNew">Cancel</button>
     </form>
     <div class="msg" id="msg" role="alert"></div>
 
@@ -45,33 +51,89 @@
     return data;
   }
 
-  function render(quizzes) {
-    $('grid').innerHTML = quizzes.length ? quizzes.map((q) => `
-      <div class="quiz-card">
-        <div>
-          <h2>${esc(q.title)}</h2>
-          <div class="meta">${q.count} question${q.count === 1 ? '' : 's'} · created ${new Date(q.createdAt).toLocaleDateString()}</div>
+  // Question time limits plus about 8 seconds per question for the reveal and leaderboard.
+  function estimate(q) {
+    const min = Math.max(1, Math.round((q.seconds + q.count * 8) / 60));
+    return `~${min} min`;
+  }
+
+  function countUp(el, value, suffix = '') {
+    if (value === null || value === undefined) { el.textContent = '–'; return; }
+    const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (reduce || value === 0) { el.textContent = value + suffix; return; }
+    const start = performance.now(), ms = 700;
+    const step = (t) => {
+      const k = Math.min(1, (t - start) / ms);
+      el.textContent = Math.round(value * (1 - Math.pow(1 - k, 3))) + suffix;
+      if (k < 1) requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  }
+
+  function renderStats(stats) {
+    countUp($('statQuizzes'), stats.quizzes);
+    countUp($('statSessions'), stats.sessions);
+    countUp($('statPlayers'), stats.players);
+    $('statAccuracy').textContent = `${stats.avgAccuracy}% avg accuracy`;
+    $('statAccuracy').classList.toggle('hidden', stats.avgAccuracy === null);
+  }
+
+  function render(quizzes, sessionsByQuiz = {}) {
+    $('newBtn').classList.toggle('hidden', !quizzes.length);
+    $('grid').classList.toggle('is-empty', !quizzes.length);
+    $('grid').innerHTML = quizzes.length ? quizzes.map((q, i) => {
+      const ready = q.count > 0;
+      const played = sessionsByQuiz[q.id] || 0;
+      return `
+      <div class="quiz-card" style="--i:${i}">
+        <div class="card-top">
+          <span class="tag ${ready ? 'tag-ready' : 'tag-draft'}">${ready ? 'Ready to launch' : 'Draft'}</span>
+          ${played ? `<span class="played">Played ${played}×</span>` : ''}
         </div>
+        <h2>${esc(q.title)}</h2>
+        <div class="facts">
+          <span>❓ ${q.count} question${q.count === 1 ? '' : 's'}</span>
+          <span>⏱ ${ready ? estimate(q) : '0 min'}</span>
+          <span>📅 ${new Date(q.createdAt).toLocaleDateString()}</span>
+        </div>
+        <a class="btn btn-grad btn-live btn-launch" href="/host/session?quiz=${q.id}" ${ready ? '' : 'aria-disabled="true" title="Add questions first"'}><span class="dot" aria-hidden="true"></span>Launch Session</a>
         <div class="row">
-          <a class="btn btn-primary" href="/host/session?quiz=${q.id}" ${q.count ? '' : 'aria-disabled="true" title="Add questions first"'}>Launch Session</a>
-          <a class="btn" href="/host/session?quiz=${q.id}&view=creator">Edit</a>
-          <button class="btn btn-danger" data-del="${q.id}" data-title="${esc(q.title)}">Delete</button>
+          <a class="btn btn-ghost btn-sm" href="/host/session?quiz=${q.id}&view=creator">Edit</a>
+          <a class="btn btn-ghost btn-sm" href="/host/results?quiz=${q.id}">Results</a>
+          <button class="btn btn-ghost btn-sm btn-danger" data-del="${q.id}" data-title="${esc(q.title)}">Delete</button>
         </div>
-      </div>`).join('')
-      : '<div class="empty-state">No quizzes yet. Press <b>Create New Quiz</b> to make your first one.</div>';
+      </div>`;
+    }).join('')
+      : `<div class="empty-state">
+          <svg class="empty-art" viewBox="0 0 200 140" aria-hidden="true">
+            <defs><linearGradient id="eg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#8b5cf6"/><stop offset="1" stop-color="#6366f1"/></linearGradient></defs>
+            <ellipse cx="100" cy="126" rx="62" ry="8" fill="rgba(139,92,246,.18)"/>
+            <rect x="46" y="28" width="96" height="84" rx="12" fill="rgba(255,255,255,.04)" stroke="rgba(255,255,255,.14)" transform="rotate(-8 94 70)"/>
+            <rect x="58" y="22" width="96" height="88" rx="12" fill="#161b26" stroke="url(#eg)" stroke-width="2"/>
+            <circle cx="78" cy="48" r="7" fill="url(#eg)"/><rect x="92" y="44" width="46" height="8" rx="4" fill="rgba(255,255,255,.22)"/>
+            <rect x="72" y="66" width="30" height="14" rx="5" fill="rgba(229,72,77,.55)"/><rect x="108" y="66" width="30" height="14" rx="5" fill="rgba(59,130,246,.55)"/>
+            <rect x="72" y="86" width="30" height="14" rx="5" fill="rgba(245,197,66,.55)"/><rect x="108" y="86" width="30" height="14" rx="5" fill="rgba(47,179,107,.55)"/>
+            <path d="M162 26l3 7 7 3-7 3-3 7-3-7-7-3 7-3z" fill="#c4b5fd"/><path d="M40 84l2 4 4 2-4 2-2 4-2-4-4-2 4-2z" fill="#a5b4fc"/>
+          </svg>
+          <h2>No quizzes yet!</h2>
+          <p>Create a quiz, add a few questions, and launch it to your class in seconds.</p>
+          <button class="btn btn-grad btn-xl" id="emptyNew">+ Create Your First Quiz</button>
+        </div>`;
   }
 
   async function load() {
     try {
-      const [me, quizzes] = await Promise.all([api('/api/me'), api('/api/quizzes')]);
+      const [me, quizzes, stats] = await Promise.all([api('/api/me'), api('/api/quizzes'), api('/api/stats')]);
       $('who').textContent = me.email;
-      render(quizzes);
+      renderStats(stats);
+      render(quizzes, stats.sessionsByQuiz);
     } catch (err) {
       $('msg').textContent = err.message;
     }
   }
 
-  $('newBtn').onclick = () => { $('newForm').classList.remove('hidden'); $('newTitle').focus(); };
+  const openNew = () => { $('newForm').classList.remove('hidden'); $('newTitle').focus(); };
+  $('newBtn').onclick = openNew;
   $('cancelNew').onclick = () => $('newForm').classList.add('hidden');
   $('newForm').addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -84,6 +146,7 @@
   });
 
   $('grid').addEventListener('click', async (e) => {
+    if (e.target.closest('#emptyNew')) { openNew(); return; }
     const launch = e.target.closest('a[aria-disabled="true"]');
     if (launch) { e.preventDefault(); $('msg').textContent = 'Add at least one question before launching this quiz.'; return; }
     const del = e.target.closest('[data-del]');

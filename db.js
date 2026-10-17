@@ -33,6 +33,7 @@ const scoreSchema = new mongoose.Schema(
   {
     rank: Number,
     name: String,
+    avatar: String,
     points: Number,
     accuracy: Number, // percent of questions answered correctly, 0-100
     correct: Number,

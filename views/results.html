@@ -16,13 +16,14 @@
 
   <main>
     <div class="head">
-      <h1>Past results</h1>
-      <div class="actions"><a class="btn" href="/host/dashboard">← Dashboard</a></div>
+      <h1 id="title">Past results</h1>
+      <div class="actions"><a class="btn hidden" id="showAll" href="/host/results">All results</a><a class="btn" href="/host/dashboard">← Dashboard</a></div>
     </div>
     <div class="msg" id="msg" role="alert"></div>
     <div id="list"></div>
   </main>
 
+<script src="/avatars.js"></script>
 <script>
   const $ = (id) => document.getElementById(id);
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -37,15 +38,23 @@
   }
 
   function render(results) {
+    const only = new URLSearchParams(location.search).get('quiz');
+    if (only) {
+      results = results.filter((r) => r.quizId === only);
+      $('title').textContent = results[0]?.quizTitle ? `Results: ${results[0].quizTitle}` : 'Past results';
+      $('showAll').classList.remove('hidden');
+    }
     if (!results.length) {
-      $('list').innerHTML = '<div class="empty-state">No finished games yet. Results are saved here when a game reaches the final podium.</div>';
+      $('list').innerHTML = only
+        ? '<div class="empty-state">This quiz has no finished games yet. Results are saved here when a game reaches the final podium.</div>'
+        : '<div class="empty-state">No finished games yet. Results are saved here when a game reaches the final podium.</div>';
       return;
     }
     $('list').innerHTML = results.map((r, i) => {
       const date = new Date(r.date);
       const winner = r.scores[0];
       const rows = r.scores.map((s) => `
-        <tr><td class="rank">#${s.rank}</td><td>${esc(s.name)}</td>
+        <tr><td class="rank">#${s.rank}</td><td><span class="person">${s.avatar ? Avatars.badge(s.avatar, 28) : ''}${esc(s.name)}</span></td>
         <td class="num">${s.points}</td><td class="num">${s.accuracy}%</td>
         <td class="num hide-sm">${s.correct}/${s.total}</td><td class="num hide-sm">${sec(s.fastestMs)}</td></tr>`).join('');
       return `<details class="result"${i === 0 ? ' open' : ''}>

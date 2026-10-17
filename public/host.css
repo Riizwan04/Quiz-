@@ -47,7 +47,12 @@ main { padding: 28px 24px; max-width: 1280px; margin: 0 auto; }
 .players-head h2 { margin: 0; font-size: 22px; }
 .count { background: var(--panel-2); border-radius: 999px; padding: 4px 12px; font-weight: 600; margin-left: 8px; font-size: 15px; }
 .players { display: flex; flex-wrap: wrap; gap: 10px; }
-.chip { background: var(--panel-2); border: 1px solid var(--border); padding: 10px 16px; border-radius: 999px; font-weight: 600; animation: pop .25s ease; }
+.chip { display: inline-flex; align-items: center; gap: 8px; background: var(--panel-2); border: 1px solid var(--border); padding: 5px 16px 5px 5px; border-radius: 999px; font-weight: 600; font-size: 17px; animation: pop .35s cubic-bezier(.2,1.5,.4,1); }
+.avatar { display: inline-grid; place-items: center; flex-shrink: 0; border-radius: 50%; line-height: 1; background: radial-gradient(circle at 30% 25%, color-mix(in srgb, var(--av) 70%, #fff), var(--av)); box-shadow: inset 0 -3px 0 rgba(0,0,0,.18); }
+.row .name { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.podium .step { position: relative; padding-top: 46px !important; }
+.podium .step-avatar { position: absolute; top: -40px; left: 50%; transform: translateX(-50%); filter: drop-shadow(0 8px 16px rgba(0,0,0,.45)); }
+.podium .p1 .step-avatar { top: -48px; }
 .chip.off { opacity: .4; }
 @keyframes pop { from { transform: scale(.8); opacity: 0; } }
 
@@ -117,7 +122,7 @@ main { padding: 28px 24px; max-width: 1280px; margin: 0 auto; }
 .board h2 { margin: 0 0 14px; }
 .row { display: grid; grid-template-columns: 48px 1fr 70px 90px 80px; gap: 16px; align-items: center; padding: 14px 18px; background: var(--panel); border: 1px solid var(--border); border-radius: 12px; margin-bottom: 8px; font-size: 20px; }
 .row .rank { font-weight: 800; color: var(--muted); }
-.row:nth-child(1) .rank { color: #f5c542; } .row:nth-child(2) .rank { color: #c9d1dc; } .row:nth-child(3) .rank { color: #d08a4e; }
+.row.r1 .rank { color: #f5c542; } .row.r2 .rank { color: #c9d1dc; } .row.r3 .rank { color: #d08a4e; }
 .row .name { font-weight: 600; }
 .row .gain { color: var(--green); font-size: 16px; }
 .row .score { font-weight: 800; font-variant-numeric: tabular-nums; text-align: right; }
@@ -146,11 +151,11 @@ main { padding: 28px 24px; max-width: 1280px; margin: 0 auto; }
 .podium .step .who { font-size: 22px; font-weight: 800; word-break: break-word; }
 .podium .step .pts { font-variant-numeric: tabular-nums; opacity: .85; }
 .podium .step .medal { font-size: 34px; font-weight: 800; }
-.podium .p1 { height: 220px; background: linear-gradient(#f5c542, #b8901d); color: #1a1a1a; }
-.podium .p2 { height: 170px; background: linear-gradient(#c9d1dc, #8b96a6); color: #1a1a1a; }
-.podium .p3 { height: 130px; background: linear-gradient(#d08a4e, #8f5626); color: #fff; }
+.podium .p1 { height: 250px; background: linear-gradient(#f5c542, #b8901d); color: #1a1a1a; }
+.podium .p2 { height: 205px; background: linear-gradient(#c9d1dc, #8b96a6); color: #1a1a1a; }
+.podium .p3 { height: 170px; background: linear-gradient(#d08a4e, #8f5626); color: #fff; }
 /* Podium animation: 3rd, then 2nd, then 1st rise up; names drop in after their step. */
-.podium { height: 300px; }
+.podium { height: 330px; }
 .podium .step { transform-origin: bottom; animation: rise .8s cubic-bezier(.2,.9,.3,1.2) both; }
 .podium .step > * { animation: fadeUp .5s ease both; }
 .podium .p3 { animation-delay: .3s; }  .podium .p3 > * { animation-delay: .9s; }

@@ -19,8 +19,28 @@
   /* Join */
   .join { width: 100%; max-width: 360px; }
   .join h1 { font-size: 30px; margin: 0 0 24px; }
-  .host-link { position: fixed; top: max(14px, env(safe-area-inset-top)); right: 16px; z-index: 5; display: inline-flex; align-items: center; gap: 6px; padding: 7px 14px; border: 1px solid var(--border); border-radius: 999px; color: var(--muted); font-size: 14px; font-weight: 600; text-decoration: none; background: transparent; transition: color .15s, border-color .15s, background .15s; }
-  .host-link:hover, .host-link:focus-visible { color: var(--text); border-color: var(--accent); background: rgba(124,92,255,.12); outline: none; }
+  .host-link { position: fixed; top: max(16px, env(safe-area-inset-top)); right: 16px; z-index: 5; display: inline-flex; align-items: center; gap: 8px; padding: 11px 20px; border: 1.5px solid rgba(139, 92, 246, .85); border-radius: 999px; color: #fff; font-size: 16px; font-weight: 700; letter-spacing: .01em; text-decoration: none; background: rgba(124, 92, 255, .16); box-shadow: 0 0 16px rgba(139, 92, 246, .45); transition: transform .18s ease, box-shadow .18s ease, background .18s ease; }
+  .host-link .arrow { transition: transform .18s ease; }
+  .host-link:hover, .host-link:focus-visible { transform: translateY(-2px); background: rgba(124, 92, 255, .28); box-shadow: 0 0 26px rgba(139, 92, 246, .7), 0 8px 20px rgba(0, 0, 0, .35); outline: none; }
+  .host-link:hover .arrow { transform: translateX(3px); }
+  .host-link:active { transform: translateY(0); }
+
+  /* Avatars */
+  .avatar { display: inline-grid; place-items: center; flex-shrink: 0; border-radius: 50%; line-height: 1; background: radial-gradient(circle at 30% 25%, color-mix(in srgb, var(--av) 70%, #fff), var(--av)); box-shadow: inset 0 -3px 0 rgba(0,0,0,.18); user-select: none; }
+  .picker { display: flex; flex-direction: column; align-items: center; gap: 10px; margin: 0 0 22px; }
+  .picker .avatar-btn { border: 0; padding: 0; background: none; cursor: pointer; border-radius: 50%; }
+  .picker .avatar { box-shadow: 0 0 0 4px var(--bg), 0 0 0 6px color-mix(in srgb, var(--av) 70%, transparent), 0 10px 30px rgba(0,0,0,.4); }
+  .picker .avatar.pop { animation: avpop .35s cubic-bezier(.2,1.6,.4,1); }
+  @keyframes avpop { 0% { transform: scale(.6) rotate(-12deg); } 100% { transform: scale(1) rotate(0); } }
+  .picker .av-name { color: var(--muted); font-size: 15px; font-weight: 600; min-height: 20px; }
+  .join .shuffle { width: auto; padding: 8px 16px; font-size: 15px; font-weight: 600; background: var(--panel); border: 1px solid var(--border); color: var(--text); border-radius: 999px; transition: transform .15s, border-color .15s; }
+  .join .shuffle:hover { border-color: var(--accent); transform: translateY(-1px); }
+  .join .shuffle:active .dice { display: inline-block; animation: roll .4s ease; }
+  @keyframes roll { to { transform: rotate(360deg); } }
+  .me { display: inline-flex; align-items: center; gap: 8px; }
+  .wait-avatar { margin-bottom: 18px; animation: bob 2.4s ease-in-out infinite; }
+  @keyframes bob { 50% { transform: translateY(-6px); } }
+  @media (prefers-reduced-motion: reduce) { .wait-avatar, .picker .avatar.pop { animation: none; } }
   .join input { width: 100%; padding: 16px; margin-bottom: 12px; font: inherit; font-size: 20px; text-align: center; border-radius: 12px; border: 1px solid var(--border); background: var(--panel); color: var(--text); }
   .join input:focus { outline: 2px solid var(--accent); border-color: transparent; }
   .join button { width: 100%; padding: 16px; font: inherit; font-size: 20px; font-weight: 700; border: 0; border-radius: 12px; background: var(--accent); color: #fff; cursor: pointer; }
@@ -55,11 +75,16 @@
 </style>
 </head>
 <body>
-  <a class="host-link" id="hostLink" href="/host">Host a quiz <span aria-hidden="true">→</span></a>
+  <a class="host-link" id="hostLink" href="/host">Host a quiz <span class="arrow" aria-hidden="true">→</span></a>
   <!-- Join -->
   <section class="screen" id="joinScreen">
     <form class="join" id="joinForm">
       <h1>Join the quiz</h1>
+      <div class="picker">
+        <button class="avatar-btn" type="button" id="avatarBtn" aria-label="Change avatar"><span id="avatarPreview"></span></button>
+        <div class="av-name" id="avatarName"></div>
+        <button class="shuffle" type="button" id="shuffleBtn"><span class="dice">🎲</span> Randomize</button>
+      </div>
       <input id="pinInput" inputmode="numeric" pattern="[0-9]*" maxlength="6" placeholder="Game PIN" autocomplete="off" required>
       <input id="nameInput" maxlength="20" placeholder="Your name" autocomplete="off" required>
       <button id="joinBtn" type="submit">Join</button>
@@ -69,6 +94,7 @@
 
   <!-- Waiting -->
   <section class="screen hidden" id="waitScreen">
+    <div class="wait-avatar" id="waitAvatar"></div>
     <p class="big" id="waitTitle">You're in!</p>
     <p class="sub" id="waitSub">Look at the screen. The game will start soon.</p>
     <div class="spinner"></div>
@@ -76,7 +102,7 @@
 
   <!-- Answer pad: buttons only, no question or answer text ever reaches this page -->
   <section class="pad-wrap hidden" id="padScreen">
-    <div class="pad-top"><span id="who"></span><span id="qNum"></span><span class="time" id="time">20</span></div>
+    <div class="pad-top"><span class="me"><span id="whoAvatar"></span><span id="who"></span></span><span id="qNum"></span><span class="time" id="time">20</span></div>
     <div class="pad" id="pad">
       <button class="ans ans-0" data-c="0" aria-label="Red A">A</button>
       <button class="ans ans-1" data-c="1" aria-label="Blue B">B</button>
@@ -97,12 +123,14 @@
 
   <!-- Final -->
   <section class="screen hidden" id="finalScreen">
+    <div id="finalAvatar" style="margin-bottom:10px"></div>
     <div class="place" id="finalPlace"></div>
     <p class="big" id="finalTitle"></p>
     <div class="score">Final score <b id="finalScore">0</b></div>
   </section>
 
 <script src="/socket.io/socket.io.js"></script>
+<script src="/avatars.js"></script>
 <script>
   const socket = io();
   const $ = (id) => document.getElementById(id);
@@ -123,6 +151,31 @@
   function loadSession() { try { return JSON.parse(sessionStorage.getItem(SESSION_KEY)); } catch { return null; } }
   function clearSession() { me = null; try { sessionStorage.removeItem(SESSION_KEY); } catch {} }
 
+  // ---------- Avatar picker ----------
+  function lastAvatar() { try { return localStorage.getItem('quizAvatar'); } catch { return null; } }
+  let avatarId = Avatars.isValid(lastAvatar()) ? lastAvatar() : Avatars.random().id;
+  function renderAvatar(animate) {
+    const a = Avatars.get(avatarId);
+    $('avatarPreview').innerHTML = Avatars.badge(avatarId, 104);
+    $('avatarName').textContent = a.name;
+    if (animate) $('avatarPreview').firstChild.classList.add('pop');
+  }
+  function shuffleAvatar() {
+    avatarId = Avatars.random(avatarId).id;
+    try { localStorage.setItem('quizAvatar', avatarId); } catch {}
+    renderAvatar(true);
+  }
+  $('shuffleBtn').onclick = shuffleAvatar;
+  $('avatarBtn').onclick = shuffleAvatar;
+  renderAvatar(false);
+
+  function showMe(name, avatar) {
+    $('who').textContent = name;
+    $('whoAvatar').innerHTML = Avatars.badge(avatar, 28);
+    $('waitAvatar').innerHTML = Avatars.badge(avatar, 88);
+    $('finalAvatar').innerHTML = Avatars.badge(avatar, 88);
+  }
+
   // Prefill PIN from QR link (?pin=123456)
   const urlPin = new URLSearchParams(location.search).get('pin');
   if (urlPin) { $('pinInput').value = urlPin; $('nameInput').focus(); }
@@ -135,12 +188,12 @@
 
   function join(pin, name) {
     $('joinBtn').disabled = true;
-    socket.emit('student:join', { pin, name }, (res) => {
+    socket.emit('student:join', { pin, name, avatar: avatarId }, (res) => {
       $('joinBtn').disabled = false;
       if (res.error) { $('joinError').textContent = res.error; show('joinScreen'); return; }
       me = { pin, name: res.name, token: res.token };
       saveSession(me);
-      $('who').textContent = res.name;
+      showMe(res.name, res.avatar);
       $('joinError').textContent = '';
       showWaiting("You're in!", 'Look at the screen. The game will start soon.');
     });
@@ -154,7 +207,7 @@
         show('joinScreen');
         return;
       }
-      $('who').textContent = res.name;
+      showMe(res.name, res.avatar);
       // During a game the server follows up with the current question, result or final screen.
       if (res.state === 'lobby') showWaiting("You're in!", 'Look at the screen. The game will start soon.');
     });

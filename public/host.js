@@ -89,7 +89,7 @@ socket.on('room:players', (players) => {
   $('count').textContent = players.length;
   updateStartButton();
   $('players').innerHTML = players.length
-    ? players.map((p) => `<span class="chip${p.connected ? '' : ' off'}">${esc(p.name)}</span>`).join('')
+    ? players.map((p) => `<span class="chip${p.connected ? '' : ' off'}">${Avatars.badge(p.avatar, 30)}${esc(p.name)}</span>`).join('')
     : '<span class="empty">Waiting for players to join…</span>';
 });
 
@@ -368,7 +368,7 @@ const fmtSec = (ms) => (ms === null || ms === undefined ? '–' : `${(ms / 1000)
 
 function boardRows(list, showGain) {
   return list.map((p) =>
-    `<div class="row"><span class="rank">#${p.rank}</span><span class="name">${esc(p.name)}</span>` +
+    `<div class="row r${p.rank}"><span class="rank">#${p.rank}</span><span class="name">${Avatars.badge(p.avatar, 32)}${esc(p.name)}</span>` +
     `<span class="gain">${showGain && p.lastPoints ? '+' + p.lastPoints : ''}</span>` +
     `<span class="time" title="Fastest correct answer">${fmtSec(p.fastestMs)}</span>` +
     `<span class="score">${p.score}</span></div>`
@@ -429,7 +429,7 @@ socket.on('game:end', ({ leaderboard, title }) => {
   $('finalTitle').textContent = title;
   const [first, second, third] = leaderboard;
   const step = (p, cls) => p
-    ? `<div class="step ${cls}"><div class="medal">${p.rank}</div><div class="who">${esc(p.name)}</div><div class="pts">${p.score} pts</div></div>`
+    ? `<div class="step ${cls}"><div class="step-avatar">${Avatars.badge(p.avatar, cls === 'p1' ? 84 : 68)}</div><div class="medal">${p.rank}</div><div class="who">${esc(p.name)}</div><div class="pts">${p.score} pts</div></div>`
     : '';
   // Re-inserting the nodes restarts the CSS animations on every game.
   $('podium').innerHTML = step(second, 'p2') + step(first, 'p1') + step(third, 'p3');

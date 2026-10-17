@@ -9,6 +9,7 @@ const { parseText, parseFile, normalizeQuestion } = require('./importer');
 const db = require('./db');
 const { Quiz, Result, User } = db;
 const auth = require('./auth');
+const Avatars = require('./public/avatars');
 
 const PORT = Number(process.env.PORT) || 3000;
 const MONGODB_URI = process.env.MONGODB_URI;
@@ -50,7 +51,13 @@ async function findOwnQuiz(userId, quizId) {
 
 async function quizSummaries(userId) {
   const docs = await Quiz.find({ hostId: userId }).sort({ createdAt: -1 }).lean();
-  return docs.map((q) => ({ id: String(q._id), title: q.title, count: q.questions.length, createdAt: q.createdAt }));
+  return docs.map((q) => ({
+    id: String(q._id),
+    title: q.title,
+    count: q.questions.length,
+    seconds: q.questions.reduce((sum, x) => sum + (x.timeLimit || 0), 0),
+    createdAt: q.createdAt,
+  }));
 }
 
 const SAMPLE_QUESTIONS = [
@@ -162,6 +169,24 @@ app.get('/api/results', apiAuth, wrap(async (req, res) => {
   })));
 }));
 
+// Dashboard totals: quizzes, finished sessions, players and average accuracy.
+app.get('/api/stats', apiAuth, wrap(async (req, res) => {
+  const [quizzes, results] = await Promise.all([
+    Quiz.countDocuments({ hostId: req.user.id }),
+    Result.find({ hostId: req.user.id }, { quizId: 1, 'scores.accuracy': 1 }).lean(),
+  ]);
+  const scores = results.flatMap((r) => r.scores);
+  const sessionsByQuiz = {};
+  for (const r of results) if (r.quizId) sessionsByQuiz[r.quizId] = (sessionsByQuiz[r.quizId] || 0) + 1;
+  res.json({
+    quizzes,
+    sessions: results.length,
+    players: scores.length,
+    avgAccuracy: scores.length ? Math.round(scores.reduce((sum, s) => sum + (s.accuracy || 0), 0) / scores.length) : null,
+    sessionsByQuiz,
+  });
+}));
+
 // File import (PDF, XLSX, CSV, JSON, TXT). Body is the raw file; returns a preview, nothing is saved yet.
 app.post('/api/import', apiAuth, express.raw({ type: () => true, limit: '10mb' }), async (req, res) => {
   try {
@@ -214,7 +239,7 @@ function resetPlayer(p) {
 }
 
 function playerList(room) {
-  return [...room.players.values()].map((p) => ({ name: p.name, connected: p.connected }));
+  return [...room.players.values()].map((p) => ({ name: p.name, avatar: p.avatar, connected: p.connected }));
 }
 
 // Highest score first. Ties go to the lower total time on correct answers, then the earlier joiner.
@@ -227,6 +252,7 @@ function leaderboard(room) {
   return rankedPlayers(room).map((p, i) => ({
     rank: i + 1,
     name: p.name,
+    avatar: p.avatar,
     score: p.score,
     lastPoints: p.lastPoints,
     fastestMs: p.fastestMs,
@@ -373,6 +399,7 @@ function saveResult(room, board, attempt = 1) {
     scores: board.map((p) => ({
       rank: p.rank,
       name: p.name,
+      avatar: p.avatar,
       points: p.score,
       accuracy: total ? Math.round((p.correctCount / total) * 100) : 0,
       correct: p.correctCount,
@@ -603,7 +630,7 @@ io.on('connection', (socket) => {
     emitPlayers(room);
   }
 
-  socket.on('student:join', ({ pin, name } = {}, ack) => {
+  socket.on('student:join', ({ pin, name, avatar } = {}, ack) => {
     pin = String(pin || '').trim();
     name = String(name || '').trim().slice(0, 20);
     const room = rooms.get(pin);
@@ -613,11 +640,18 @@ io.on('connection', (socket) => {
     if (room.state !== 'lobby') return ack?.({ error: 'Game already in progress.' });
 
     const token = crypto.randomBytes(16).toString('hex');
-    const player = { name, joinedAt: Date.now(), connected: true, socketId: null, dropTimer: null };
+    const player = {
+      name,
+      avatar: Avatars.isValid(avatar) ? avatar : Avatars.random().id,
+      joinedAt: Date.now(),
+      connected: true,
+      socketId: null,
+      dropTimer: null,
+    };
     resetPlayer(player);
     room.players.set(token, player);
     attach(room, token, player);
-    ack?.({ ok: true, name, token, state: room.state });
+    ack?.({ ok: true, name, avatar: player.avatar, token, state: room.state });
   });
 
   // Reconnect after a refresh or dropped connection, using the token saved in the browser.
@@ -626,7 +660,7 @@ io.on('connection', (socket) => {
     const player = room?.players.get(String(token || ''));
     if (!player) return ack?.({ error: 'Your previous game has ended.' });
     attach(room, token, player);
-    ack?.({ ok: true, name: player.name, state: room.state, score: player.score });
+    ack?.({ ok: true, name: player.name, avatar: player.avatar, state: room.state, score: player.score });
     sendCurrentState(room, player);
   });
 
